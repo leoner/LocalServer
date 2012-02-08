@@ -1,0 +1,21 @@
+{
+    "name": "localserver",
+    "version": "0.1.0",
+    "description": "local http server",
+    "keywords": [
+        "dir",
+        "server",
+        "http"
+     ],
+     "contributors": [
+        {
+            "name": "hui.kang",
+            "email": "kangpangpang@gmail.com"
+        }
+     ],
+     "dependencies": {
+        "mime": "1.2.4"
+     },
+     "engines": {"node": ">=0.6.10"},
+     "main": "./server.js"
+}
