@@ -6,8 +6,10 @@
 #### 下载项目代码
 
 #### 服务映射. 
+```
 alias localserver='node /localserver-src/server.js'
 alias addserver='node /localserver-src/addserver.js'
+```
 
 #### 启动服务
 
