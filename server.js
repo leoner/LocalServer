@@ -6,7 +6,9 @@
 //TODO 6. 支持文件过滤
 //
 
+
 var fileDir = process.cwd();
+var mime = require('mime');
 
 var http = require('http'),
 	util = require('util'),
@@ -14,20 +16,74 @@ var http = require('http'),
 	querystring = require('querystring'),
 	fs = require('fs');
 
+var pathMapping = {
+    
+};
+var configPath = process.env.HOME + '/.localserver/config.js';
 
+var initPathMapping = function() {
+    var config = fs.readFileSync(configPath).toString();
+    pathMapping = JSON.parse(config);   
+};
+(function() {
+    initPathMapping();
+    fs.watch(configPath, function() {
+        initPathMapping();
+    });
+}());
+
+http.createServer( function(req, res) {
+	var urlObj = url.parse(req.url),
+   		queryObj,
+		isDelay = false;
+	//res.writeHeader(200, {'Content-Type': 'text/plain'});
+	//res.end('Hello World\n');
+	initPath(urlObj);
+	if (urlObj.query) {
+		queryObj = querystring.parse(urlObj.query);
+		if (queryObj.timeout) {
+			var timeout = parseInt(queryObj.timeout) || 1;
+			isDelay = true;
+			setTimeout( function() {
+			    renderPath(urlObj, res);
+			}, timeout);	
+		}	
+	}
+	if (urlObj.pathname.indexOf('favicon.ico') > -1) {
+	    res.write('<html><title>title</title><head></head><body></html>');	
+	    return;
+	}
+	if (!isDelay) {
+		renderPath(urlObj, res);
+	}
+}).listen(2000, '127.0.0.1');
+
+var initPath = function(urlObj) {
+    var paths = urlObj.pathname.split('/');
+    var context = paths.splice(1,1)[0];
+    urlObj.pathname = paths.join('/') || '/';
+    urlObj.context = context;
+    fileDir = pathMapping[context] || process.cwd(); 
+};
+
+var renderPath = function(urlObj, res) {
+    Type.getTypeObj(urlObj).output(res);
+};
 
 var filter = process.argv && process.argv[2];
-console.log(filter);
+if ( filter ) filter = new RegExp(filter);
 
 
-var Type = function(path) {
+var Type = function(urlObj) {
 	this.contentType = 'text/html';
 	this.data = [];
-	this.path = path;
+	this.path = urlObj.path;
+	this.pathname = urlObj.pathname
+	this.context = urlObj.context; 
 };
 Type.prototype = {
 	outputHeader: function(res) {
-		res.writeHeader(200, {'Content-Type': this.contentType, 'charset': 'UTF-8'});
+		res.writeHeader(200, {'Content-Type': this.contentType +  ';charset=UTF-8'});
 	},
 	outputHtmlHead: function(res) {
 		res.write('<html><title>title</title><head></head><body>');	
@@ -47,7 +103,10 @@ Type.prototype = {
 	},
 	getData: function() {
 		throw new Error('This Is A Abstract Class');	
-	}
+	},
+    getContentType: function() {
+        return mime.lookup(this.pathname);                
+    }
 };
 var getType = function(path) {
 	var index = path.lastIndexOf('.');
@@ -56,80 +115,73 @@ var getType = function(path) {
 	}	
 	return path.substring(index + 1, path.length);
 };
-Type.typeMapping = {};
-Type.getTypeObj = function(path) {
-	console.log(getType(path))
-	var clazz = Type.typeMapping[getType(path)];
-	if (!clazz) {
-		return new OtherType(path);
+Type.getTypeObj = function(urlObj) {
+	if (getType(urlObj.pathname) === 'dir') {
+		return new DirType(urlObj);
 	} 	
-	return new clazz(path);
+	return new FileType(urlObj);
 };
 var DirType = function() {
-	Type.call(this);
+	Type.apply(this, arguments);
 };
-Type.typeMapping['dir'] = DirType;
 util.inherits(DirType, Type);
 
 DirType.prototype.getData = function() {
 	var that = this;
-	this.fileList = fs.readdirSync(fileDir).filter(function(name) {
-		return name.indexOf('.') > 0 && name != 'n_server.js';
-	});
-	this.fileList.forEach(function(name) {
-		that.data.push(that.getLink(name));
-	});
-	return this.data.join('<br/>');
+	var data = [];
+	var realPath = fileDir + this.pathname;
+	try {
+        this.fileList = fs.readdirSync(realPath).filter(function(name) {
+            if (filter) {
+                return filter.test(name); 
+            }
+            return name.indexOf('.') != 0;
+        }).forEach(function(name) {
+            data.push(that.getLink(name));
+        });
+	    return data.join('<br/>');
+	} catch (e) {
+	    return "not found!";
+	}
 };
 
 DirType.prototype.getLink = function(title) {
-	return '<a href="/' + title + '">' + title + '</a>';
+	return '<a href="' + this.path + '/' + title + '">' + title + '</a>';
 };
 
-var JsType = function() {
+var FileType = function() {
 	Type.apply(this, arguments);
-	this.contentType = 'text/javascript';
+	this.contentType = this.getContentType(this.pathname);
 };
-Type.typeMapping['js'] = JsType;
-Type.typeMapping['json'] = JsType;
-util.inherits(JsType, Type);
-JsType.prototype.output = function(res) {
-	var data = fs.readFileSync(fileDir + this.path);
+util.inherits(FileType, Type);
+FileType.prototype.output = function(res) {
 	this.outputHeader(res);
-	res.end(data);
+	var n = 1024 * 1024;
+	var buffer = new Buffer(n);
+	/**
+	var data = fs.read(fileDir + this.path, buffer, function(err, data) {
+        res.write(data);    	
+        res.end();        
+	});
+	**/
+    var rs = fs.createReadStream(fileDir + this.pathname);
+    rs.on('open', function(fd) {
+        readLargeFile(n, fd, buffer, 0, res); 
+    });
 };
-var HtmlType = function() {
-	Type.apply(this, arguments);
-	this.contentType = 'text/html';
-};
-util.inherits(HtmlType, JsType);
-Type.typeMapping['html'] = HtmlType;
 
-var OtherType = function() {
+var readLargeFile = function(n, fd, buffer, i, res) {
+    fs.read(fd, buffer, 0, n, n*i, function(err, bytesRead, b) {
+        i++;
+        if (bytesRead == n) {
+            res.write(buffer);
+            readLargeFile(n, fd, buffer, i, res);
+        } else {
+            res.end(buffer.slice(0, bytesRead)); 
+        }
+   }); 
+};
 
-};
-OtherType.prototype.output = function() {
-	
-};
-http.createServer( function(req, res) {
-	var urlObj = url.parse(req.url),
-   		queryObj,
-		isDelay = false;
-	//res.writeHeader(200, {'Content-Type': 'text/plain'});
-	//res.end('Hello World\n');
-	if (urlObj.query) {
-		queryObj = querystring.parse(urlObj.query);
-		if (queryObj.timeout) {
-			var timeout = parseInt(queryObj.timeout) || 1;
-			isDelay = true;
-			setTimeout( function() {
-				Type.getTypeObj(urlObj.pathname).output(res);
-			}, timeout);	
-		}	
-	}
-	if (!isDelay) {
-		Type.getTypeObj(urlObj.pathname).output(res);
-	}
-}).listen(2000, '127.0.0.1');
+
 
 
