@@ -22,8 +22,18 @@ var pathMapping = {
 var configPath = process.env.HOME + '/.localserver/config.js';
 
 var initPathMapping = function() {
-    var config = fs.readFileSync(configPath).toString();
-    pathMapping = JSON.parse(config);   
+    var config;
+    try {
+        config = fs.readFileSync(configPath).toString();
+    }catch(e) {
+        if (e.code = 'ENOENT') {
+           fs.writeFile(configPath, "{}", function (err) {
+                if (err) throw err;
+                console.log('Config  initd!');
+            });     
+        }
+    } 
+    pathMapping = JSON.parse("{}");   
 };
 (function() {
     initPathMapping();
